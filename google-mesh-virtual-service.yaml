@@ -1,0 +1,21 @@
+# route HTTP traffic to developers.google.com through the egress gateway for the entire mesh
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: developers-google-com
+  namespace: istio-system
+spec:
+  hosts:
+  - developers.google.com
+  exportTo:
+  - "*" # all namespaces in the mesh
+  # ALT: you can change this to "." and publish a copy of this in every namespace
+  # that you want to allow a service to consume apis.google.com - but this is more
+  # management if you're going to be authoring an authz policy anyway
+  gateways:
+  - mesh # apply to sidecars in the mesh
+  http:
+  - name: "developers-google-com-egress-gw"
+    route:
+    - destination:
+        host: istio-egressgateway.istio-system.svc.cluster.local

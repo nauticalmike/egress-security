@@ -1,0 +1,17 @@
+# in the namespace that your egress gateway is deployed in,
+# configure the mesh to route the host to a real destination
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-developers-google-com
+spec:
+  hosts:
+  - developers.google.com
+  exportTo:
+  - "."
+  location: MESH_EXTERNAL
+  ports:
+  - number: 443
+    name: https
+    protocol: TLS
+  resolution: DNS

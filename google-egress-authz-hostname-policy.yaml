@@ -1,0 +1,19 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-developers-google-com
+  namespace: istio-system
+spec:
+  # allow-list for the identities that can call the host
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/APP-NAMESPACE/sa/APP-SERVICE-ACCOUNT
+        # list all services that can call the API
+        # - cluster.local/ns/APP-NAMESPACE/sa/APP-SERVICE-ACCOUNT
+    to:
+    - operation:
+        hosts:
+        - developers.google.com
