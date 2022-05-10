@@ -1,0 +1,16 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-deny-developers-google-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: DENY
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/otherns/sa/sleep-yahoo"]
+    to:
+    - operation:
+        hosts:
+        - developers.google.com

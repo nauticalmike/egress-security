@@ -1,0 +1,17 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-allow-developers-google-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["default"]
+    to:
+    - operation:
+        methods: ["GET"]
+        hosts:
+        - developers.google.com
