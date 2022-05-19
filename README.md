@@ -2,17 +2,22 @@
 
 An Istio Egress gateway is just another envoy instance similar to the Ingress but with the purpose to control outbound traffic. Istio uses ingress and egress gateways to configure load balancers executing at the edge of a service mesh. An ingress gateway allows you to define entry points into the mesh that all incoming traffic flows through. Egress gateway is a symmetrical concept; it defines exit points from the mesh. Egress gateways allow you to apply Istio features, for example, monitoring and route rules, to traffic exiting the mesh.
 
+![](/assets/images/ingress-egress.png)
+
 This article describes how to enforce outbound authorization policies using Istio's Egress gateway in a similar matter when enforcing inbound policies. For this we use the `sleep` service in two separate namespaces within the mesh to access external services at Google and Yahoo.
 
 ***
-NOTE: One important consideration to be aware of is that Istio cannot securely enforce that all egress traffic actually flows through the egress gateways. Istio only enables such flow through its sidecar proxies. If attackers bypass the sidecar proxy, they could directly access external services without traversing the egress gateway. Kubernetes network policies (see `k8s-network-policy.yaml` file) can be used to prevent outbound traffic at the cluster level, see https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway/#additional-security-considerations.
+NOTE: One important consideration to be aware of is that Istio cannot securely enforce that all egress traffic actually flows through the egress gateways. Istio only enables such flow through its sidecar proxies. If attackers bypass the sidecar proxy, they could directly access external services without traversing the egress gateway. Kubernetes network policies can be used to prevent outbound traffic at the cluster level, for more read [here](https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway/#additional-security-considerations).
+
 ***
 
 ## Before starting
 
-Before starting you need:
+Before starting you'll need:
 - a kubernetes cluster
-- istioctl 
+- kubectl cli tool
+- Istio v1.11 or greater installed
+- istioctl cli tool
 - sleep service
 
 ## Prep-work
@@ -22,7 +27,7 @@ Install istio:
 istioctl install -y --set profile=demo --set meshConfig.outboundTrafficPolicy.mode=ALLOW_ANY
 ```
 
-Notice the demo profile installs an instance of an Egress gateway and we are configuring the handling of external services by using the `outboundTrafficPolicy` option. `ALLOW_ANY` is the default option enabling access to outbound services and `REGISTRY_ONLY` gets the proxies to block access if the host is not defined in the service registry using the `ServiceEntry` resource. 
+Notice the demo profile installs an instance of an Egress gateway and the set flag configures the handling of external services by using the `outboundTrafficPolicy` option. `ALLOW_ANY` is the default option enabling access to outbound services and `REGISTRY_ONLY` gets the sidecar proxies to block access if the host is not defined in the service registry using the `ServiceEntry` resource. 
 
 ### Install the sleep service in the default namespace
 
@@ -109,6 +114,8 @@ x-content-type-options: nosniff
 
 If you want you can test the other other address on the other `sleep` pod. We can confirm the pods have outbound access to Google and Yahoo.
 
+![](/assets/images/proxy-external.png)
+
 ## Block outbound access 
 
 Using `istioctl` we modify the istio installation to change the outbound traffic policy from `ALLOW_ANY` to `REGISTRY_ONLY` which enforces that only hosts defined with `ServiceEntry` resources are part of the mesh service registry; could be accessed to by sidecars of the mesh:
@@ -143,11 +150,34 @@ The error is due to the new policy enforcing only services part of the registry 
 
 ***
 NOTE: There could be a slight delay on the configuration being propagated to the sidecars where the still allow access to the external services.
+
 ***
 
 ### Add the Google and Yahoo services to the mesh service registry
 
-Add Google:
+Our Google `ServiceEntry` looks like this:
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-developers-google-com
+spec:
+  hosts:
+  - developers.google.com
+  exportTo:
+  - "."
+  location: MESH_EXTERNAL
+  resolution: DNS
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+```
+
+Apply the resource:
 ```bash
 kubectl apply -f google-serviceentry.yaml
 ```
@@ -181,7 +211,29 @@ kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I https://developers.google.com
 kubectl exec $SLEEP_POD1 -it -- curl -I https://developers.google.com
 ```
 
-Notice how Yahoo is still blocked on both services. Enable traffic on the default namespace and test it:
+Notice how Yahoo is still blocked on both services. Take a look at the Yahoo `ServiceEntry`:
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-developer-yahoo-com
+spec:
+  hosts:
+  - developer.yahoo.com
+  exportTo:
+  - "."
+  location: MESH_EXTERNAL
+  resolution: DNS
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+```
+
+Enable traffic on the default namespace and test it:
 ```bash
 kubectl apply -f yahoo-serviceentry.yaml
 ```
@@ -197,7 +249,9 @@ kubectl apply -n otherns -f yahoo-serviceentry.yaml
 kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I https://developer.yahoo.com
 ```
 
-You should expect a 200 response code from both pods. Any other request to other hosts that are not Yahoo or Google should be blocked and only allowed from the default and otherns namespaces.
+You should expect a 200 response code from both pods. Any other request to other external hosts that are not Yahoo or Google should be blocked and only allowed if in the service registry from the default and otherns namespaces.
+
+Notice how when the `ServiceEntry` resource is created in the target namespace, external communication to the defined host is allowed only from the `sidecar` proxies on that namespace.
 
 ### Cleanup
 
@@ -220,10 +274,13 @@ We can accomplish this fine-grained control with an `AuthorizationPolicy` after 
 
 In a similar manner when dealing with inbound traffic routing, we can create `DestinationRule`s that flow internal traffic from the sidecars to the egress and then a second `DestinationRule` that flows the traffic to actual external host. 
 
-These `DestinationRule`s are bound to a `VirtualService` that matches traffic to the whole `mesh` `Gateway` and the `Gateway` defined for the external host. By doing this setup, we can rely on the previously explained `ServiceEntry` and `AuthorizationPolicy` resources to ensure that only allowed/denied outbound traffic defined for namespaces or principals (k8s ServiceAccount) can reach the external hosts. 
+These `DestinationRule`s are bound to a `VirtualService` that matches traffic to the whole `mesh` `Gateway` and the `Gateway` defined for the external host. By doing this setup, we can rely on the `ServiceEntry` and `AuthorizationPolicy` resources to ensure that only allowed/denied outbound traffic defined for namespaces or principals (k8s ServiceAccount) can reach the external hosts. 
+
+![](/assets/images/egress-external.png)
 
 ***
 NOTE: Is important to note that for this example relies on Istio's automatic mutual TLS, this means services within the mesh send TLS traffic and we are only sending `SIMPLE` TLS traffic at the egress when requests leave the mesh to the actual external host. For `mTLS` origination for egress traffic the `DestinationRule` needs to define the secret name that holds the client credentials certificate and be on `MUTUAL` mode. See more details [here](https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway-tls-origination/#configure-mutual-tls-origination-for-egress-traffic).
+
 ***
 
 ### Route internal outbound traffic to the egress gateway
@@ -243,12 +300,217 @@ curl: (35) OpenSSL SSL_connect: Connection reset by peer in connection to develo
 command terminated with exit code 35
 ```
 
-Analyze the following files: `external-google.yaml` and `external-yahoo.yaml`, where you can find:
+Analyze the following resources `external-google.yaml` and `external-yahoo.yaml`:
 
-- a `ServiceEntry`s to enable external access to these hosts
-- a `Gateway` resource for each host configuring the egress gateway instance for originating traffic to the external host
-- a `VirtualService` for each host bound for the entire mesh and the created `Gateway` resource configuration in order to match traffic from within the mesh (sidecars) to the egress and from the egress outbound to the external host
-- and a couple `DestinationRule`s applied to the traffic after being routed by the `VirtualService` where the first defines internal traffic using the `sni` and relying on Istio's automatic mTLS `ISTIO_MUTUAL`. The second rule defines how to initiate https connections to the actual external host. 
+Google:
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: google
+spec:
+  hosts:
+  - developers.google.com
+  ports:
+  - number: 80
+    name: http
+    protocol: HTTP
+  - number: 443
+    name: https
+    protocol: HTTPS
+  resolution: DNS
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: istio-google-egressgateway
+spec:
+  selector:
+    istio: egressgateway # use Istio default gateway implementation
+  servers:
+  - port:
+      number: 80
+      name: https-port-for-tls-origination
+      protocol: HTTPS
+    hosts:
+    - developers.google.com
+    tls:
+      mode: ISTIO_MUTUAL
+---
+# Routes internal outbound traffic to the egress gateway using Istio's mTLS
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: egressgateway-for-google
+spec:
+  host: istio-egressgateway.istio-system.svc.cluster.local
+  subsets:
+  - name: google
+    trafficPolicy:
+      portLevelSettings:
+      - port:
+          number: 80
+        tls:
+          mode: ISTIO_MUTUAL
+          sni: developers.google.com
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: direct-google-through-egress-gateway
+spec:
+  hosts:
+  - developers.google.com
+  gateways:
+  - istio-google-egressgateway
+  - mesh
+  # route HTTP traffic to developers.google.com through the egress gateway for the entire mesh
+  http:
+  - match:
+    - gateways:
+      - mesh # apply to sidecars in the mesh
+      port: 80
+    route:
+    - destination:
+        host: istio-egressgateway.istio-system.svc.cluster.local
+        subset: google
+        port:
+          number: 80
+  # at the egress gateway, route developers.google.com to the real destination outside the mesh
+  - match:
+    - gateways:
+      - istio-google-egressgateway
+      port: 80
+    route:
+    - destination:
+        host: developers.google.com
+        port:
+          number: 443
+      weight: 100
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: originate-tls-for-developers-google-com
+spec:
+  host: developers.google.com
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    portLevelSettings:
+    - port:
+        number: 443
+      tls:
+        mode: SIMPLE # initiates HTTPS for connections to developers.google.com
+```
+
+Yahoo:
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: yahoo
+spec:
+  hosts:
+  - developer.yahoo.com
+  ports:
+  - number: 80
+    name: http
+    protocol: HTTP
+  - number: 443
+    name: https
+    protocol: HTTPS
+  resolution: DNS
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: istio-yahoo-egressgateway
+spec:
+  selector:
+    istio: egressgateway # use Istio default gateway implementation
+  servers:
+  - port:
+      number: 80
+      name: https-port-for-tls-origination
+      protocol: HTTPS
+    hosts:
+    - developer.yahoo.com
+    tls:
+      mode: ISTIO_MUTUAL
+---
+# Routes internal outbound traffic to the egress gateway using Istio's mTLS
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: egressgateway-for-yahoo
+spec:
+  host: istio-egressgateway.istio-system.svc.cluster.local
+  subsets:
+  - name: yahoo
+    trafficPolicy:
+      portLevelSettings:
+      - port:
+          number: 80
+        tls:
+          mode: ISTIO_MUTUAL
+          sni: developer.yahoo.com
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: direct-yahoo-through-egress-gateway
+spec:
+  hosts:
+  - developer.yahoo.com
+  gateways:
+  - istio-yahoo-egressgateway
+  - mesh
+  # route HTTP traffic to developers.google.com through the egress gateway for the entire mesh
+  http:
+  - match:
+    - gateways:
+      - mesh # apply to sidecars in the mesh
+      port: 80
+    route:
+    - destination:
+        host: istio-egressgateway.istio-system.svc.cluster.local
+        subset: yahoo
+        port:
+          number: 80
+  # at the egress gateway, route developer.yahoo.com to the real destination outside the mesh
+  - match:
+    - gateways:
+      - istio-yahoo-egressgateway
+      port: 80
+    route:
+    - destination:
+        host: developer.yahoo.com
+        port:
+          number: 443
+      weight: 100
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: originate-tls-for-developer-yahoo-com
+spec:
+  host: developer.yahoo.com
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    portLevelSettings:
+    - port:
+        number: 443
+      tls:
+        mode: SIMPLE # initiates HTTPS for connections to developer.yahoo.com
+```
+
+In the previous resources you can find:
+- `ServiceEntry`s to enable external access to these hosts
+- `Gateway`s resources for each host configuring the egress gateway instance for originating traffic to the external host
+- `VirtualService`s for each host bound for the entire mesh and the created `Gateway` resource configuration in order to match traffic from within the mesh (sidecars) to the egress and from the egress outbound to the actual external host
+- and a couple `DestinationRule`s applied to the traffic after being routed by the `VirtualService` where the first defines internal traffic using the `sni` and relying on Istio's automatic mTLS `ISTIO_MUTUAL`. The second `DestinationRule` defines how to initiate https connections to the actual external host. 
 
 Apply these resources and test accessing the services:
 
@@ -258,7 +520,8 @@ kubectl apply -f external-yahoo.yaml -n istio-system
 ```
 
 ***
-NOTE: Notice this time we are applying all these resources on the `istio-system` namespace where the egress gateway instance resides. This is with the intention to easily manage egress traffic where the egress gateway instance resides, facilitating the management of the `AuthorizationPolicy`s.  
+NOTE: This time we are applying all these resources on the `istio-system` namespace where the egress gateway instance resides. This is with the intention to easily manage egress traffic where the egress gateway instance resides, facilitating the management of the `AuthorizationPolicy`s.  
+
 ***
 
 Access `developers.google.com`:
@@ -308,7 +571,8 @@ Expect and entry from the egress to the external host:
 ```
 
 ***
-NOTE: Notice how the internal outbound traffic is intentionally originated using `http` in order to rely on Istio's automatic mTLS within the mesh and then using the `DestinationRule` tls mode `SIMPLE` the egress instance does a secure request to the external host.
+NOTE: Notice how the internal outbound traffic is intentionally originated using `http` in order to rely on Istio's automatic mTLS within the mesh and then using the `DestinationRule` tls mode `SIMPLE`, the egress instance does a secure request to the external host.
+
 ***
 
 Repeat the same steps using the `sleep` service on the `otherns` for the Yahoo host:
@@ -336,7 +600,18 @@ Expect 200 responses from either `sleep` service.
 
 ### Enforce authorization polices
 
-Although we can enforce denying access by removing `ServiceEntry` resources we can also do it with `AuthorizationPolicy`s after the correct configuration is in place.
+Although we can enforce denying external access by removing `ServiceEntry` resources while the `REGISTRY_ONLY` mode is active, we can also do it with a more fine-grained control using `AuthorizationPolicy`s after the correct configuration is in place.
+
+Take a look at this policy that allows no traffic out:
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+ name: allow-nothing
+ namespace: istio-system
+spec:
+  {}
+```
 
 Apply the `authz-policy-allow-nothing.yaml` file that enforces this purpose:
 ```bash
@@ -353,6 +628,7 @@ kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I http://developer.yahoo.com
 
 ***
 NOTE: Keep in mind some requests could be allowed while the configuration takes place
+
 ***
 
 Expect a response along the lines:
@@ -374,7 +650,45 @@ kubectl delete authorizationpolicies.security.istio.io -n istio-system allow-not
 
 ### Enforce policies per namespace
 
-This use case allows the `sleep` service on the `default` namespace to access google but not yahoo and the for the `sleep` service on the `otherns` namespace it allows yahoo but not google.
+For this use case we allow the `sleep` service on the `default` namespace to access `google` but not `yahoo` and the for the `sleep` service on the `otherns` namespace it allows `yahoo` but not `google`.
+
+Analyze the following policies:
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-deny-developers-google-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: DENY
+  rules:
+  - from:
+    - source:
+        namespaces: ["otherns"]
+    to:
+    - operation:
+        hosts:
+        - developers.google.com
+```
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-deny-developer-yahoo-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: DENY
+  rules:
+  - from:
+    - source:
+        namespaces: ["default"]
+    to:
+    - operation:
+        hosts:
+        - developer.yahoo.com
+```
 
 Apply the following policies:
 ```bash
@@ -404,10 +718,12 @@ kubectl delete authorizationpolicies.security.istio.io -n istio-system external-
 
 ### Enforce policies per workload using service account principals
 
-For this use case deploy another set of `sleep` services on the `otherns` namespace:
+Using account principals provides the fine-grained control we need per workload within a namespace. For this use case deploy another set of `sleep` services on the `otherns` namespace:
 ```bash
 kubectl apply -f sleep-custom.yaml -n otherns
 ``` 
+
+The yaml file above is the traditional `sleep` service with custom names, see [here](https://github.com/nauticalmike/egress-security/blob/main/sleep-custom.yaml).
 
 This would create two new `sleep-google` and `sleep-yahoo` services besides the existing one. Save the pods names:
 ```bash
@@ -415,7 +731,45 @@ export SLEEP_POD_G=$(kubectl get pod -n otherns -l app=sleep-google -ojsonpath='
 export SLEEP_POD_Y=$(kubectl get pod -n otherns -l app=sleep-yahoo -ojsonpath='{.items[0].metadata.name}')
 ```
 
-Apply the following policies that block the `sleep-google` service to access Yahoo and `sleep-yahoo` service to access Google within the `otherns` namespace still leaving access to both from the `sleep` service:
+Apply the following policies that block the `sleep-google` service to access Yahoo and `sleep-yahoo` service to access Google within the `otherns` namespace, still leaving access to both hosts from the `sleep` service:
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-deny-developers-google-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: DENY
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/otherns/sa/sleep-yahoo"]
+    to:
+    - operation:
+        hosts:
+        - developers.google.com
+
+```
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: external-deny-developer-yahoo-com
+  # No ns means that applies to all ns in a mesh
+spec:
+  # allow-list for the identities that can call the host
+  action: DENY
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/otherns/sa/sleep-google"]
+    to:
+    - operation:
+        hosts:
+        - developer.yahoo.com
+```
+
 ```bash
 kubectl apply -f authz-policy-deny-google-custom.yaml -n istio-system 
 kubectl apply -f authz-policy-deny-yahoo-custom.yaml -n istio-system
@@ -434,3 +788,8 @@ kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I http://developer.yahoo.com
 The second and third responses should be 403 forbidden as they are from `sleep-google` to Yahoo and the third from `sleep-yahoo` to Google while the rest should be 200.
 
 You successfully used `AuthorizationPolicy`s to enforce internal outbound traffic through the egress gateway.
+
+
+# Summary
+
+Using the right combination of `ServiceEntry`s, `DestinationRule`s, `VirtualService`s, `Gateway`s and `AuthorizationPolicy` allows to flow internal outbound traffic to our egress gateway instance with the purpose to fine-grained control the workloads outbound traffic.
