@@ -1,0 +1,86 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: google
+spec:
+  hosts:
+  - developers.google.com
+  location: MESH_EXTERNAL
+  ports:
+  - number: 443
+    name: google-tls
+    protocol: TLS
+  resolution: DNS
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: istio-google-egressgateway
+spec:
+  selector:
+    istio: egressgateway # use Istio default gateway implementation
+  servers:
+  - port:
+      number: 443
+      name: https-port-for-tls-origination-google
+      protocol: TLS
+    hosts:
+    - developers.google.com
+    tls:
+      mode: ISTIO_MUTUAL
+---
+# Routes internal outbound traffic to the egress gateway using Istio's mTLS
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: egressgateway-for-google
+spec:
+  host: istio-egressgateway.istio-system.svc.cluster.local
+  subsets:
+  - name: google
+    trafficPolicy:
+      portLevelSettings:
+      - port:
+          number: 443
+        tls:
+          mode: ISTIO_MUTUAL
+          sni: developers.google.com
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: direct-google-through-egress-gateway
+spec:
+  hosts:
+  - developers.google.com
+  gateways:
+  - istio-google-egressgateway
+  - mesh
+  # route HTTP traffic to developers.google.com through the egress gateway for the entire mesh
+  tls:
+  - match:
+    - gateways:
+      - mesh # apply to sidecars in the mesh
+      port: 443
+      sniHosts:
+      - developers.google.com
+    route:
+    - destination:
+        host: istio-egressgateway.istio-system.svc.cluster.local
+        subset: google
+        port:
+          number: 443 
+      weight: 100
+  # at the egress gateway, route developers.google.com to the real destination outside the mesh
+  tcp:
+  - match:
+    - gateways:
+      - istio-google-egressgateway
+      port: 443
+    route:
+    - destination:
+        host: developers.google.com
+        port:
+          number: 443
+      weight: 100
+---

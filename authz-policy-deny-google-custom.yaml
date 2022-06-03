@@ -14,3 +14,7 @@ spec:
     - operation:
         hosts:
         - developers.google.com
+    when:
+    - key: connection.sni
+      values: 
+      - developers.google.com

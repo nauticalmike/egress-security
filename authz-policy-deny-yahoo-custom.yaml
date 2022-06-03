@@ -14,3 +14,7 @@ spec:
     - operation:
         hosts:
         - developer.yahoo.com
+    when:
+    - key: connection.sni
+      values: 
+      - developer.yahoo.com
