@@ -1021,7 +1021,7 @@ spec:
       - developer.yahoo.com
 ```
 
-The key is the main takeaway when doing TLS origination as the sni key prevents SSL errors mismatching the SAN.
+The `connection.sni` key is the main takeaway when doing TLS origination as the sni key prevents SSL errors mismatching the SAN.
 
 Now testing you should get the following results (make sure only the two previous policies are in place):
 
