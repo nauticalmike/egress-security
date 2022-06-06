@@ -749,10 +749,10 @@ spec:
   - from:
     - source:
         principals: ["cluster.local/ns/otherns/sa/sleep-yahoo"]
-    to:
-    - operation:
-        hosts:
-        - developers.google.com
+    when:
+    - key: connection.sni
+      values: 
+      - developers.google.com
 
 ```
 ```yaml
@@ -768,10 +768,10 @@ spec:
   - from:
     - source:
         principals: ["cluster.local/ns/otherns/sa/sleep-google"]
-    to:
-    - operation:
-        hosts:
-        - developer.yahoo.com
+    when:
+    - key: connection.sni
+      values: 
+      - developer.yahoo.com
 ```
 
 ```bash
