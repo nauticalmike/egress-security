@@ -10,10 +10,6 @@ spec:
   - from:
     - source:
         namespaces: ["otherns"]
-    to:
-    - operation:
-        hosts:
-        - developers.google.com
     when:
     - key: connection.sni
       values: 
