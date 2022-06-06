@@ -1029,13 +1029,13 @@ Now testing you should get the following results (make sure only the two previou
 kubectl exec $SLEEP_POD1 -it -- curl -I https://developer.yahoo.com
 kubectl exec $SLEEP_POD1 -it -- curl -I https://developers.google.com
 ```
-For should be 200.
+For both should be 200.
 
 ```bash
 kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I https://developers.google.com
 kubectl exec $SLEEP_POD2 -n otherns -it -- curl -I https://developer.yahoo.com
 ```
-For should be 200.
+For both should be 200.
 
 ```bash
 kubectl exec $SLEEP_POD_G -n otherns -it -- curl -I https://developers.google.com
