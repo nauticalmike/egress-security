@@ -670,10 +670,10 @@ spec:
   - from:
     - source:
         namespaces: ["otherns"]
-    to:
-    - operation:
-        hosts:
-        - developers.google.com
+    when:
+    - key: connection.sni
+      values: 
+      - developers.google.com
 ```
 ```yaml
 apiVersion: security.istio.io/v1beta1
@@ -688,10 +688,10 @@ spec:
   - from:
     - source:
         namespaces: ["default"]
-    to:
-    - operation:
-        hosts:
-        - developer.yahoo.com
+    when:
+    - key: connection.sni
+      values: 
+      - developer.yahoo.com
 ```
 
 Apply the following policies:
